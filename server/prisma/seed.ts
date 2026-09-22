@@ -9,7 +9,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from "@pixel-estates/shared";
-import { ensureCityIsland } from "../src/services/worldService.js";
+import { ensureCityIsland, ensureCityIslandTestWorld } from "../src/services/worldService.js";
 import { purchasePixels, expandRect } from "../src/services/pixelService.js";
 import { ensureCreditBalance, creditUser } from "../src/services/creditService.js";
 import { getOrCreateAttackConfig } from "../src/services/attackService.js";
@@ -267,6 +267,9 @@ async function main() {
   // --- attack config, a starter property for alice/bob, and one event -----
   const cityIsland = await ensureCityIsland();
   console.log(`City Island ready: ${cityIsland.pixelWidth}x${cityIsland.pixelHeight} = ${(cityIsland.pixelWidth * cityIsland.pixelHeight).toLocaleString()} pixels @ $${(cityIsland.pixelPriceCents / 100).toFixed(2)}/pixel`);
+
+  const testWorld = await ensureCityIslandTestWorld(admin.id);
+  console.log(`City Island — TEST ready (key: ${testWorld.key}) for the admin sandbox`);
 
   await getOrCreateAttackConfig();
 

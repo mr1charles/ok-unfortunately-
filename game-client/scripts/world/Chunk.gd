@@ -16,7 +16,11 @@ var ground: MeshInstance3D
 var pixels_multimesh: MultiMeshInstance3D
 
 
-func setup(p_chunk_x: int, p_chunk_y: int, p_chunk_size: int) -> void:
+## `shared_ground_material` is one ShaderMaterial instance reused by every
+## chunk (see Main.gd) so the "grid lines fade in near the player" effect
+## only needs one uniform updated per frame regardless of how many chunks
+## are loaded, instead of one per chunk.
+func setup(p_chunk_x: int, p_chunk_y: int, p_chunk_size: int, shared_ground_material: Material = null) -> void:
 	chunk_x = p_chunk_x
 	chunk_y = p_chunk_y
 	chunk_size = p_chunk_size
@@ -28,10 +32,13 @@ func setup(p_chunk_x: int, p_chunk_y: int, p_chunk_size: int) -> void:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(chunk_size, chunk_size)
 	ground.mesh = plane
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.62, 0.62, 0.62)
-	mat.roughness = 0.9
-	ground.material_override = mat
+	if shared_ground_material:
+		ground.material_override = shared_ground_material
+	else:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.62, 0.62, 0.62)
+		mat.roughness = 0.9
+		ground.material_override = mat
 	ground.position = Vector3(origin_x + chunk_size / 2.0, 0.0, origin_y + chunk_size / 2.0)
 
 	add_child(ground)

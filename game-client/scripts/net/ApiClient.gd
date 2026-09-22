@@ -154,6 +154,10 @@ func place_decoration(property_id: String, object_type: String, x: int, y: int, 
 	})
 
 
+func remove_decoration(decoration_id: String) -> Dictionary:
+	return await delete_json("/properties/decorations/%s" % decoration_id)
+
+
 # --- Credits / mining -------------------------------------------------
 
 func get_credits() -> Dictionary:

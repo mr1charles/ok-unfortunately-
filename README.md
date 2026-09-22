@@ -299,6 +299,29 @@ against the running Postgres-backed server:
   platform SDK/Xcode) - not on anything in the preset configuration itself.
 - Both `server` and `client` TypeScript projects `tsc --noEmit` clean and `vite build` clean.
 
+### Vertical-slice hardening pass
+
+A follow-up pass closed every gap in the 20-step "first playable demo" walkthrough (login → spawn
+→ walk → look at land → buy → connect → build → explore):
+
+- **Pixel grid on the terrain itself** (`shaders/grid_ground.gdshader`): a shared `ShaderMaterial`
+  on every chunk's ground draws 1m grid lines (1 pixel = 1 meter) that fade in only within ~26m of
+  the player and fade to flat gray beyond that - verified the shader compiles with zero errors
+  under `godot4 --headless`.
+- **Accurate look-at info**: the crosshair label now reads live ownership from the already-loaded
+  chunk data (`ChunkManager.get_pixel`, no extra network round trip) and shows `AVAILABLE - $0.01`,
+  `OWNED BY YOU` (with live pixel count for your own property), or `OWNED BY <username>` - verified
+  by curl that the chunk/pixel endpoints return the `owner.username` this depends on.
+- **Build mode**: `[R]` now cycles placement rotation (verified round-tripping 180° through a real
+  place → re-fetch → confirm), and `[E]` on a tile that already has one of your decorations removes
+  it instead of erroring, covering place/rotate/delete with the existing crosshair-driven controls.
+- **Ocean**: a large water plane around the spawn point gives City Island an actual "island"
+  silhouette instead of an infinite gray plain, without shrinking the real 100,000,000-pixel
+  purchasable grid.
+- **Seed**: now also provisions a persistent `city-island-test` world ("City Island — TEST") so the
+  admin test-world system has a stable target to load, in addition to the on-demand clones the
+  admin dashboard's "Clone as test world" button creates.
+
 ## Database schema
 
 `server/prisma/schema.prisma` has two subsystems:

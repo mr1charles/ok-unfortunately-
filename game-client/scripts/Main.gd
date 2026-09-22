@@ -10,6 +10,7 @@ const MINING_HOLD_SECONDS := 1.5
 const MINING_RANGE := 3.0
 const ConnectionEffect = preload("res://scripts/world/ConnectionEffect.gd")
 const ShieldDome = preload("res://scripts/world/ShieldDome.gd")
+const GridGroundShader = preload("res://shaders/grid_ground.gdshader")
 
 var hud
 var player: CharacterBody3D
@@ -23,7 +24,10 @@ var mining_hold_time: float = 0.0
 var is_mining: bool = false
 var build_mode_object_type: String = ""
 var build_preview: MeshInstance3D
+var build_rotation: int = 0
+var my_decorations_by_pixel: Dictionary = {} # "x,y" -> decoration id
 var _entered_world: bool = false
+var ground_shader_material: ShaderMaterial
 var decoration_catalog: Array = []
 var defense_catalog: Array = []
 
@@ -307,6 +311,7 @@ func _enter_world() -> void:
 	_spawn_player(world)
 	_spawn_chunk_manager(world)
 	_spawn_pixel_selector()
+	_spawn_ocean(world)
 
 	await _refresh_my_properties()
 
@@ -346,6 +351,28 @@ func _run_test_actions() -> void:
 		print("[TEST] purchasing a shield...")
 		await _purchase_shield("SHIELD")
 
+		# Rotation + removal: place at a distinct offset so repeated test
+		# runs against the same seeded property never collide with the
+		# plain "tree" placed just above.
+		var rx: int = min(px + 2, int(my_properties[0].get("maxX", px)))
+		var ry: int = min(py + 2, int(my_properties[0].get("maxY", py)))
+		if rx == px and ry == py:
+			ry = py # tiny 1-pixel property edge case; still exercises place+remove at the same spot as the first placement would have
+		print("[TEST] placing a rotated decoration at (", rx, ",", ry, ") rotation=180...")
+		var rotated_result := await Api.place_decoration(pid, "lamp", rx, ry, 180)
+		print("[TEST] rotated place ok=", rotated_result.get("ok"), " err=", rotated_result.get("error"))
+		if rotated_result.get("ok", false):
+			var decoration_id: String = rotated_result.get("data", {}).get("decoration", {}).get("id", "")
+			var round_trip := await Api.list_property_decorations(pid)
+			var found_rotation = null
+			for d in round_trip.get("data", {}).get("decorations", []):
+				if String(d.get("id", "")) == decoration_id:
+					found_rotation = d.get("rotation")
+			print("[TEST] rotation round-trip check: expected 180, got ", found_rotation)
+			print("[TEST] removing that decoration...")
+			var remove_result := await Api.remove_decoration(decoration_id)
+			print("[TEST] remove ok=", remove_result.get("ok"), " err=", remove_result.get("error"))
+
 	print("[TEST] all actions completed without crashing.")
 
 
@@ -361,12 +388,50 @@ func _spawn_player(world: Dictionary) -> void:
 	player.global_position = Vector3(spawn_x, 1.0, spawn_y)
 
 
+## City Island's actual purchasable grid is enormous (10,000 x 10,000
+## pixels, matching the 100,000,000-pixel economy), but the *playable
+## vertical slice* is meant to feel like a walkable island with water
+## around it, not an infinite plain - see the design brief. A single large
+## water plane centered on the spawn point gives that "island surrounded by
+## water" read near the starting area without needing to actually bound
+## (and thereby misrepresent) the purchasable pixel grid itself. A simple
+## flat, semi-transparent plane is a deliberate placeholder - swapping in a
+## real water shader later doesn't touch anything else.
+func _spawn_ocean(world: Dictionary) -> void:
+	var center_x := float(GameState.player_pixel_x)
+	var center_y := float(GameState.player_pixel_y)
+
+	var ocean := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(4000, 4000)
+	ocean.mesh = plane
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.16, 0.45, 0.7, 0.88)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.15
+	mat.metallic = 0.15
+	mat.emission_enabled = true
+	mat.emission = Color(0.1, 0.3, 0.45)
+	mat.emission_energy_multiplier = 0.15
+	ocean.material_override = mat
+	ocean.position = Vector3(center_x, -0.35, center_y)
+	add_child(ocean)
+
+
 func _spawn_chunk_manager(world: Dictionary) -> void:
 	chunk_manager = Node3D.new()
 	chunk_manager.set_script(load("res://scripts/world/ChunkManager.gd"))
 	add_child(chunk_manager)
 	chunk_manager.player = player
+	chunk_manager.ground_material = _get_ground_material()
 	chunk_manager.set_world(world)
+
+
+func _get_ground_material() -> ShaderMaterial:
+	if ground_shader_material == null:
+		ground_shader_material = ShaderMaterial.new()
+		ground_shader_material.shader = GridGroundShader
+	return ground_shader_material
 
 
 func _spawn_pixel_selector() -> void:
@@ -486,6 +551,8 @@ func _ensure_mining_node() -> void:
 func _process(delta: float) -> void:
 	if player == null or hud == null:
 		return
+	if ground_shader_material:
+		ground_shader_material.set_shader_parameter("fade_center", player.global_position)
 	_update_target_info()
 	_process_mining(delta)
 	_process_build_placement()
@@ -496,10 +563,29 @@ func _update_target_info() -> void:
 		hud.set_target_info("")
 		return
 	var px: Vector2i = player.target_pixel
+
 	if build_mode_object_type != "":
 		hud.set_target_info("Placing: %s at (%d, %d) - [E] to place, [Esc] cancel" % [build_mode_object_type, px.x, px.y])
+		return
+
+	var owned = chunk_manager.get_pixel(px.x, px.y) if chunk_manager else null
+	if owned == null:
+		var price := float(GameState.current_world.get("pixelPriceCents", 1)) / 100.0
+		hud.set_target_info("Pixel (%d, %d) - AVAILABLE - $%.2f  [hold LMB to select, then buy]" % [px.x, px.y, price])
+		return
+
+	var owner_id := String(owned.get("ownerId", ""))
+	var owner_username := String(owned.get("owner", {}).get("username", "someone"))
+	if owner_id == GameState.user_id:
+		var property = _find_property_containing(px)
+		if property != null:
+			hud.set_target_info(
+				"PROPERTY - %d pixels - OWNED BY YOU  [B to build, E to mine]" % int(property.get("pixelCount", 1))
+			)
+		else:
+			hud.set_target_info("Pixel (%d, %d) - OWNED BY YOU  [B to build]" % [px.x, px.y])
 	else:
-		hud.set_target_info("Pixel (%d, %d) - $%.2f/pixel  [hold LMB to select]" % [px.x, px.y, float(GameState.current_world.get("pixelPriceCents", 1)) / 100.0])
+		hud.set_target_info("Pixel (%d, %d) - OWNED BY %s" % [px.x, px.y, owner_username])
 
 
 func _process_mining(delta: float) -> void:
@@ -539,6 +625,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_do_attack()
 	elif event.is_action_pressed("cancel_selection") and build_mode_object_type != "":
 		_cancel_build_mode()
+	elif event.is_action_pressed("rotate_placement") and build_mode_object_type != "":
+		build_rotation = (build_rotation + 90) % 360
+		if build_preview:
+			build_preview.rotation_degrees.y = build_rotation
 	elif event.is_action_pressed("interact") and build_mode_object_type != "":
 		_place_building()
 
@@ -551,7 +641,9 @@ func _open_build_menu() -> void:
 		options.append({"label": "%s %s" % [String(entry.get("emoji", "")), String(entry.get("label", ""))], "value": entry.get("key")})
 	hud.show_choice_menu("Build", options, func(object_type):
 		build_mode_object_type = String(object_type)
-		hud.toast("Placement mode: %s - look at your land and press E" % build_mode_object_type)
+		build_rotation = 0
+		hud.toast("Placement mode: %s - [E] place/remove, [R] rotate, [Esc] exit" % build_mode_object_type)
+		await _refresh_my_decorations()
 	)
 
 
@@ -577,28 +669,68 @@ func _process_build_placement() -> void:
 	build_preview.visible = true
 	var px: Vector2i = player.target_pixel
 	build_preview.position = Vector3(px.x + 0.5, 0.3, px.y + 0.5)
+	build_preview.rotation_degrees.y = build_rotation
+	# Tint red when something is already there, to hint that [E] will
+	# remove it instead of placing a new one.
+	var mat := build_preview.material_override as StandardMaterial3D
+	if mat:
+		var occupied: bool = my_decorations_by_pixel.has("%d,%d" % [px.x, px.y])
+		mat.albedo_color = Color(1.0, 0.4, 0.4, 0.55) if occupied else Color(0.4, 1.0, 0.5, 0.55)
 
 
 func _cancel_build_mode() -> void:
 	build_mode_object_type = ""
+	build_rotation = 0
 	if build_preview:
 		build_preview.visible = false
 
 
+## [E] on an empty owned tile places the currently-selected catalog item;
+## [E] on a tile that already has one of your decorations removes it
+## instead - covers place/move(remove+replace)/delete with one control,
+## consistent with the crosshair-driven interaction style used elsewhere
+## (PixelSelector, mining).
 func _place_building() -> void:
 	if player.target_pixel == null or my_properties.is_empty():
 		return
 	var px: Vector2i = player.target_pixel
+	var pixel_key := "%d,%d" % [px.x, px.y]
+
+	if my_decorations_by_pixel.has(pixel_key):
+		var decoration_id: String = my_decorations_by_pixel[pixel_key]
+		var remove_result := await Api.remove_decoration(decoration_id)
+		if not remove_result.get("ok", false):
+			hud.toast(remove_result.get("error", "Could not remove that"), "error")
+			return
+		hud.toast("Removed.", "success")
+		await _refresh_my_decorations()
+		return
+
 	var target_property = _find_property_containing(px)
 	if target_property == null:
 		hud.toast("You can only build on your own land", "error")
 		return
-	var result := await Api.place_decoration(target_property.get("id"), build_mode_object_type, px.x, px.y, 0)
+	var result := await Api.place_decoration(target_property.get("id"), build_mode_object_type, px.x, px.y, build_rotation)
 	if not result.get("ok", false):
 		hud.toast(result.get("error", "Could not place that here"), "error")
 		return
 	hud.toast("Placed %s!" % build_mode_object_type, "success")
-	_cancel_build_mode()
+	await _refresh_my_decorations()
+
+
+## Caches every decoration on the player's own properties as "x,y" ->
+## decoration id, so the build-mode preview and [E] handler know instantly
+## (no per-tile network round trip) whether a tile is empty or occupied.
+func _refresh_my_decorations() -> void:
+	var lookup: Dictionary = {}
+	for property in my_properties:
+		var result := await Api.list_property_decorations(property.get("id"))
+		if not result.get("ok", false):
+			continue
+		var decorations: Array = result.get("data", {}).get("decorations", [])
+		for d in decorations:
+			lookup["%d,%d" % [int(d.get("x", 0)), int(d.get("y", 0))]] = String(d.get("id", ""))
+	my_decorations_by_pixel = lookup
 
 
 func _find_property_containing(px: Vector2i) -> Variant:

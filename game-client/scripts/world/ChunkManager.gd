@@ -10,7 +10,18 @@ const RELOAD_INTERVAL := 0.5
 
 var world: Dictionary = {}
 var player: Node3D
+## Shared ShaderMaterial (grid_ground.gdshader) every chunk's ground uses -
+## see Main.gd, which updates its `fade_center` uniform to the player's
+## position each frame. Optional: falls back to a plain gray material per
+## chunk if never set.
+var ground_material: Material
 var loaded_chunks: Dictionary = {} # "cx,cy" -> Chunk
+## Flat "x,y" -> pixel-data lookup covering every owned pixel in the
+## currently-loaded radius, rebuilt on every reload. Lets the crosshair show
+## accurate ownership instantly (AVAILABLE / OWNED BY YOU / OWNED BY x)
+## without a network round-trip for every pixel the player looks at - see
+## Main.gd `_update_target_info()`.
+var pixel_lookup: Dictionary = {}
 var _last_center: Vector2i = Vector2i(1 << 30, 1 << 30)
 var _reload_timer: float = 0.0
 var _loading: bool = false
@@ -27,6 +38,13 @@ func set_world(w: Dictionary) -> void:
 
 func force_refresh() -> void:
 	_force_next = true
+
+
+## Returns the pixel dict ({x,y,colorHex,ownerId,owner:{username},
+## propertyId}) for a loaded pixel, or null if that pixel is unowned or
+## outside the currently-streamed radius.
+func get_pixel(x: int, y: int) -> Variant:
+	return pixel_lookup.get("%d,%d" % [x, y])
 
 
 func _process(delta: float) -> void:
@@ -62,6 +80,11 @@ func _reload_around(cx: int, cy: int, chunk_size: int) -> void:
 	var data: Dictionary = result.get("data", {})
 	var pixels: Array = data.get("pixels", [])
 
+	var new_lookup: Dictionary = {}
+	for p in pixels:
+		new_lookup["%d,%d" % [int(p.get("x", 0)), int(p.get("y", 0))]] = p
+	pixel_lookup = new_lookup
+
 	var wanted: Dictionary = {}
 	for dx in range(-RADIUS, RADIUS + 1):
 		for dy in range(-RADIUS, RADIUS + 1):
@@ -90,6 +113,6 @@ func _reload_around(cx: int, cy: int, chunk_size: int) -> void:
 			chunk = Node3D.new()
 			chunk.set_script(load("res://scripts/world/Chunk.gd"))
 			add_child(chunk)
-			chunk.setup(coord.x, coord.y, chunk_size)
+			chunk.setup(coord.x, coord.y, chunk_size, ground_material)
 			loaded_chunks[key] = chunk
 		chunk.set_pixels(buckets.get(key, []))

@@ -75,6 +75,40 @@ export async function ensureCityIsland() {
   });
 }
 
+/**
+ * Ensures a persistent, stable-key admin test world exists
+ * ("city-island-test" -> "City Island — TEST"), so the admin test-world
+ * system always has a ready-made target to load instead of only the
+ * throwaway `cloneAsTestWorld` copies created on demand (those get a
+ * timestamp baked into their key so re-running this seed step never
+ * collides with them). Idempotent - safe to call on every seed run.
+ */
+export async function ensureCityIslandTestWorld(adminId: string) {
+  const existing = await prisma.world.findUnique({ where: { key: "city-island-test" } });
+  if (existing) return existing;
+
+  const source = await ensureCityIsland();
+  return prisma.world.create({
+    data: {
+      key: "city-island-test",
+      name: "City Island — TEST",
+      description: `⚠ TEST WORLD — a sandbox copy of "${source.name}". Nothing here affects production.`,
+      emoji: source.emoji,
+      kind: "TEST_COPY",
+      pixelWidth: source.pixelWidth,
+      pixelHeight: source.pixelHeight,
+      chunkSize: source.chunkSize,
+      pixelPriceCents: source.pixelPriceCents,
+      maxPixelsPerPurchase: source.maxPixelsPerPurchase,
+      maxPropertiesPerPlayer: source.maxPropertiesPerPlayer,
+      developmentThresholds: source.developmentThresholds as unknown as object,
+      isTestCopy: true,
+      sourceWorldId: source.id,
+      createdByAdminId: adminId,
+    },
+  });
+}
+
 export interface CreateWorldParams {
   key: string;
   name: string;

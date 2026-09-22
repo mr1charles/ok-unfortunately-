@@ -1,0 +1,768 @@
+// Pixel Estates - Prisma schema
+// All monetary amounts are stored as integer cents to avoid floating point
+// drift. The platform fee percentage is NOT hardcoded anywhere in this
+// schema or the services that use it - see PlatformConfig below, which is
+// the single authoritative source read by server/src/services/platformConfigService.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PLAYER
+  ADMIN
+}
+
+enum PlotStatus {
+  AVAILABLE // never purchased, owned by the platform
+  OWNED // owned by a player, not listed
+  LISTED // owned by a player, listed for direct sale
+  AUCTION // owned by a player, currently in an active auction
+  UNAVAILABLE // frozen / removed by an admin
+}
+
+enum ListingStatus {
+  ACTIVE
+  PAUSED
+  SOLD
+  CANCELLED
+}
+
+enum AuctionStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum TransactionType {
+  PLATFORM_PURCHASE
+  MARKETPLACE_SALE
+  AUCTION_SALE
+  DEPOSIT
+  WITHDRAWAL
+}
+
+enum NotificationType {
+  LAND_PURCHASED
+  LAND_SOLD
+  AUCTION_WON
+  AUCTION_LOST
+  OUTBID
+  AUCTION_ENDED_SELLER
+  LISTING_CREATED
+  LISTING_SOLD
+  LISTING_CANCELLED
+  ADMIN_ACTION
+  SYSTEM
+}
+
+enum ReportTargetType {
+  LISTING
+  AUCTION
+  USER
+  PLOT
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ---------------------------------------------------------------------------
+// 3D pixel-world system (Worlds/Islands, sparse pixel ownership, Properties,
+// Credits, Attacks/Defenses, Events, Admin action log). This is an additive
+// subsystem alongside the original 24x24 "Pixel Estates" grid above - the
+// two coexist; the pixel-world system is what the Godot 3D client and the
+// world/marketplace-v2 API surface talk to. See server/src/services for the
+// services that operate on these models.
+// ---------------------------------------------------------------------------
+
+enum WorldKind {
+  STANDARD
+  EVENT
+  TEST_COPY
+}
+
+enum DefenseKind {
+  SHIELD
+  ENERGY_BARRIER
+  SECURITY_TOWER
+}
+
+enum AttackResult {
+  SUCCESS
+  BLOCKED
+  FAILED
+  CRITICAL
+}
+
+enum PropertyMarketStatus {
+  NONE
+  LISTED
+  AUCTION
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  username     String   @unique
+  /// Null for accounts created via social sign-in that have never set a
+  /// password. authService rejects email/password login for these with a
+  /// clear "use social sign-in" error rather than a generic invalid-
+  /// credentials message.
+  passwordHash String?
+  role         UserRole @default(PLAYER)
+  isBanned     Boolean  @default(false)
+  hasOnboarded Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  character         Character?
+  balance           Balance?
+  ownedPlots        LandPlot[]       @relation("PlotOwner")
+  landOwnerships    LandOwnership[]
+  listingsCreated   Listing[]        @relation("ListingSeller")
+  listingsBought    Listing[]        @relation("ListingBuyer")
+  auctionsCreated   Auction[]        @relation("AuctionSeller")
+  bids              Bid[]
+  auctionsWon       Auction[]        @relation("AuctionWinner")
+  transactionsFrom  Transaction[]    @relation("TransactionFrom")
+  transactionsTo    Transaction[]    @relation("TransactionTo")
+  notifications     Notification[]
+  inventoryItems    InventoryItem[]
+  decorationsPlaced LandDecoration[]
+  reportsFiled      Report[]         @relation("ReportReporter")
+  configChanges     PlatformConfig[] @relation("ConfigUpdatedBy")
+
+  // Pixel-world system
+  worldsCreated          World[]                @relation("WorldCreatedBy")
+  pixelsOwned            PixelOwnership[]
+  properties             Property[]
+  propertyDecorations    PropertyDecoration[]
+  creditBalance          CreditBalance?
+  creditTransactions     CreditTransaction[]
+  attacksMade            Attack[]               @relation("AttackAttacker")
+  attacksReceived        Attack[]               @relation("AttackDefender")
+  dailyAttackAllowance   DailyAttackAllowance[]
+  eventItemsOwned        PlayerEventItem[]
+  adminActionLogs        AdminActionLog[]       @relation("AdminActionLogAdmin")
+  attackConfigChanges    AttackConfig[]         @relation("AttackConfigUpdatedBy")
+  propertyListingsSold   PropertyListing[]      @relation("PropertyListingSeller")
+  propertyListingsBought PropertyListing[]      @relation("PropertyListingBuyer")
+  propertyAuctionsSold   PropertyAuction[]      @relation("PropertyAuctionSeller")
+  propertyAuctionsWon    PropertyAuction[]      @relation("PropertyAuctionWinner")
+  propertyBids           PropertyBid[]
+  oauthAccounts          OAuthAccount[]
+
+  @@index([role])
+}
+
+enum OAuthProviderKind {
+  GOOGLE
+  APPLE
+  MICROSOFT
+}
+
+/// A linked social sign-in identity. A user can link more than one
+/// provider to the same account (e.g. Google on web, Apple on iOS) - the
+/// account is found-or-created by (provider, providerAccountId), and a
+/// verified email match against an existing local account links to that
+/// account rather than creating a duplicate. See server/src/services/
+/// oauthService.ts.
+model OAuthAccount {
+  id                String            @id @default(uuid())
+  userId            String
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          OAuthProviderKind
+  providerAccountId String
+  email             String?
+  createdAt         DateTime          @default(now())
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Character {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appearance Json // CharacterAppearance shape, see shared/src/types.ts
+  positionX  Int      @default(12)
+  positionY  Int      @default(12)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// A single player's real-money wallet balance. All mutations MUST go
+/// through walletService so an immutable Transaction row is always written
+/// alongside the balance change - never mutate `balanceCents` directly.
+model Balance {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceCents Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+model LandPlot {
+  id                 String     @id @default(uuid())
+  x                  Int
+  y                  Int
+  status             PlotStatus @default(AVAILABLE)
+  ownerId            String?
+  owner              User?      @relation("PlotOwner", fields: [ownerId], references: [id])
+  platformPriceCents Int // price to buy directly from the platform while AVAILABLE
+  lastSalePriceCents Int?
+  biomeSeed          Int        @default(0) // deterministic visual variation
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  ownershipHistory LandOwnership[]
+  listings         Listing[]
+  auctions         Auction[]
+  decorations      LandDecoration[]
+  transactions     Transaction[]
+  reports          Report[]
+
+  @@unique([x, y])
+  @@index([status])
+  @@index([ownerId])
+}
+
+/// Historical + current ownership stints for a plot. `releasedAt == null`
+/// means this is the current owner. Distinct from Transaction (money
+/// ledger) - this is the ownership/provenance ledger for a property.
+model LandOwnership {
+  id                 String          @id @default(uuid())
+  plotId             String
+  plot               LandPlot        @relation(fields: [plotId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User            @relation(fields: [userId], references: [id])
+  acquiredAt         DateTime        @default(now())
+  releasedAt         DateTime?
+  acquiredPriceCents Int
+  acquiredVia        TransactionType
+
+  @@index([plotId])
+  @@index([userId])
+}
+
+model Listing {
+  id          String        @id @default(uuid())
+  plotId      String
+  plot        LandPlot      @relation(fields: [plotId], references: [id], onDelete: Cascade)
+  sellerId    String
+  seller      User          @relation("ListingSeller", fields: [sellerId], references: [id])
+  buyerId     String?
+  buyer       User?         @relation("ListingBuyer", fields: [buyerId], references: [id])
+  priceCents  Int
+  status      ListingStatus @default(ACTIVE)
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  soldAt      DateTime?
+  cancelledAt DateTime?
+
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([plotId])
+  @@index([sellerId])
+}
+
+model Auction {
+  id                 String        @id @default(uuid())
+  plotId             String
+  plot               LandPlot      @relation(fields: [plotId], references: [id], onDelete: Cascade)
+  sellerId           String
+  seller             User          @relation("AuctionSeller", fields: [sellerId], references: [id])
+  description        String?
+  startingPriceCents Int
+  reservePriceCents  Int?
+  currentBidCents    Int?
+  currentBidderId    String?
+  currentBidder      User?         @relation("AuctionWinner", fields: [currentBidderId], references: [id])
+  status             AuctionStatus @default(ACTIVE)
+  startAt            DateTime      @default(now())
+  endAt              DateTime
+  settledAt          DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  bids         Bid[]
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([endAt])
+  @@index([plotId])
+}
+
+model Bid {
+  id          String   @id @default(uuid())
+  auctionId   String
+  auction     Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  bidderId    String
+  bidder      User     @relation(fields: [bidderId], references: [id])
+  amountCents Int
+  createdAt   DateTime @default(now())
+
+  @@index([auctionId])
+  @@index([bidderId])
+}
+
+/// Immutable financial ledger. Every balance-affecting operation writes
+/// exactly one row here. Rows are never updated or deleted by normal
+/// application code (admins may `flag` a row, never mutate amounts).
+model Transaction {
+  id                String           @id @default(uuid())
+  type              TransactionType
+  grossCents        Int // total amount that changed hands
+  feeCents          Int              @default(0) // platform's cut
+  netCents          Int // amount actually credited to the recipient (gross - fee)
+  feePercentApplied Int              @default(0) // fee % in effect at time of transaction, for audit
+  fromUserId        String?
+  fromUser          User?            @relation("TransactionFrom", fields: [fromUserId], references: [id])
+  toUserId          String?
+  toUser            User?            @relation("TransactionTo", fields: [toUserId], references: [id])
+  plotId            String?
+  plot              LandPlot?        @relation(fields: [plotId], references: [id])
+  listingId         String?
+  listing           Listing?         @relation(fields: [listingId], references: [id])
+  auctionId         String?
+  auction           Auction?         @relation(fields: [auctionId], references: [id])
+  // Pixel-world system: set instead of plotId/listingId/auctionId when this
+  // ledger entry originates from a Property sale/listing/auction there.
+  propertyId        String?
+  property          Property?        @relation(fields: [propertyId], references: [id])
+  propertyListingId String?
+  propertyListing   PropertyListing? @relation(fields: [propertyListingId], references: [id])
+  propertyAuctionId String?
+  propertyAuction   PropertyAuction? @relation(fields: [propertyAuctionId], references: [id])
+  description       String
+  flagged           Boolean          @default(false)
+  flagReason        String?
+  createdAt         DateTime         @default(now())
+
+  @@index([type])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+}
+
+/// Catalog items a player has unlocked and can place as land decorations.
+/// quantity = -1 means unlimited (the default for the free starter catalog).
+model InventoryItem {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  objectType String
+  quantity   Int      @default(-1)
+  acquiredAt DateTime @default(now())
+
+  @@unique([userId, objectType])
+}
+
+model LandDecoration {
+  id             String   @id @default(uuid())
+  plotId         String
+  plot           LandPlot @relation(fields: [plotId], references: [id], onDelete: Cascade)
+  objectType     String
+  x              Int
+  y              Int
+  rotation       Int      @default(0)
+  placedByUserId String
+  placedBy       User     @relation(fields: [placedByUserId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([plotId])
+}
+
+/// Singleton-ish config table (normally exactly one row). Admins can update
+/// platformFeePercent at runtime; this is the ONLY authoritative source for
+/// the marketplace fee - see shared/src/config.ts for the seed default.
+model PlatformConfig {
+  id                 Int      @id @default(autoincrement())
+  platformFeePercent Int      @default(10)
+  updatedAt          DateTime @updatedAt
+  updatedById        String?
+  updatedBy          User?    @relation("ConfigUpdatedBy", fields: [updatedById], references: [id])
+}
+
+model Report {
+  id         String           @id @default(uuid())
+  reporterId String
+  reporter   User             @relation("ReportReporter", fields: [reporterId], references: [id])
+  targetType ReportTargetType
+  targetId   String
+  plotId     String?
+  plot       LandPlot?        @relation(fields: [plotId], references: [id])
+  reason     String
+  status     ReportStatus     @default(OPEN)
+  createdAt  DateTime         @default(now())
+  resolvedAt DateTime?
+
+  @@index([status])
+}
+
+/// One island/world. Dimensions are pixelWidth x pixelHeight (City Island =
+/// 10,000 x 10,000 = 100,000,000 pixels). Pixel rows are NEVER pre-seeded -
+/// PixelOwnership only holds a row once a pixel is actually purchased, so a
+/// 100M-pixel world costs nothing in storage until players buy into it.
+/// `ownedPixelCount` is a denormalized counter maintained atomically on
+/// purchase so "percent developed" never requires a COUNT(*) over a
+/// potentially huge sparse table.
+model World {
+  id                     String    @id @default(uuid())
+  key                    String    @unique // url-safe slug, e.g. "city-island"
+  name                   String
+  description            String?
+  emoji                  String    @default("🏙️")
+  kind                   WorldKind @default(STANDARD)
+  pixelWidth             Int
+  pixelHeight            Int
+  chunkSize              Int       @default(64)
+  pixelPriceCents        Int       @default(1) // $0.01 default per spec
+  maxPixelsPerPurchase   Int       @default(50000)
+  maxPropertiesPerPlayer Int? // null = unlimited
+  /// Ordered array of { percent: number, stage: string, label: string }
+  /// describing how the world's visuals evolve as ownedPixelCount grows.
+  developmentThresholds  Json
+  ownedPixelCount        Int       @default(0)
+  isActive               Boolean   @default(true)
+  isPrivate              Boolean   @default(false)
+  ownerId                String? // set for player-owned custom/private islands
+  isTestCopy             Boolean   @default(false)
+  sourceWorldId          String?
+  sourceWorld            World?    @relation("WorldTestCopies", fields: [sourceWorldId], references: [id])
+  testCopies             World[]   @relation("WorldTestCopies")
+  createdByAdminId       String?
+  createdByAdmin         User?     @relation("WorldCreatedBy", fields: [createdByAdminId], references: [id])
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  pixels     PixelOwnership[]
+  properties Property[]
+  attacks    Attack[]
+  events     Event[]
+  listings   PropertyListing[]
+  auctions   PropertyAuction[]
+
+  @@index([kind])
+  @@index([isTestCopy])
+}
+
+/// Sparse pixel ownership: one row per OWNED pixel only. Absence of a row at
+/// (worldId, x, y) means the pixel is unowned/available. Indexed for both
+/// point lookups (buy validation) and bounding-box range queries (chunk
+/// streaming to the Godot client).
+model PixelOwnership {
+  id                 String   @id @default(uuid())
+  worldId            String
+  world              World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  x                  Int
+  y                  Int
+  ownerId            String
+  owner              User     @relation(fields: [ownerId], references: [id])
+  propertyId         String
+  property           Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  colorHex           String   @default("#4f7cff")
+  purchasePriceCents Int
+  purchasedAt        DateTime @default(now())
+
+  @@unique([worldId, x, y])
+  @@index([worldId, propertyId])
+  @@index([ownerId])
+  @@index([worldId, x, y])
+}
+
+/// A connected plot: the set of contiguous pixels (4-directionally adjacent)
+/// owned by the same player, maintained incrementally by pixelService's
+/// union-find-style merge on every purchase. `pixelCount` is denormalized so
+/// property size never requires scanning PixelOwnership.
+model Property {
+  id           String               @id @default(uuid())
+  worldId      String
+  world        World                @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  ownerId      String
+  owner        User                 @relation(fields: [ownerId], references: [id])
+  name         String?
+  pixelCount   Int                  @default(0)
+  minX         Int
+  minY         Int
+  maxX         Int
+  maxY         Int
+  marketStatus PropertyMarketStatus @default(NONE)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  pixels       PixelOwnership[]
+  decorations  PropertyDecoration[]
+  defenses     Defense[]
+  attacksOn    Attack[]
+  listings     PropertyListing[]
+  auctions     PropertyAuction[]
+  transactions Transaction[]
+
+  @@index([worldId, ownerId])
+  @@index([marketStatus])
+}
+
+/// A placed object (building/tree/road/sign/light/event item) on a property,
+/// positioned in absolute world pixel coordinates.
+model PropertyDecoration {
+  id             String   @id @default(uuid())
+  propertyId     String
+  property       Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  objectType     String
+  x              Int
+  y              Int
+  rotation       Int      @default(0)
+  placedByUserId String
+  placedBy       User     @relation(fields: [placedByUserId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([propertyId])
+}
+
+/// Gameplay currency, kept strictly separate from the real-money Balance/
+/// Transaction ledger above. Never convertible to cash automatically.
+model CreditBalance {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credits   Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model CreditTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount      Int // positive = earned, negative = spent
+  reason      String
+  relatedType String? // MINING | ATTACK | SHIELD | DEFENSE | ADMIN_GRANT | EVENT
+  relatedId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// An active defense on a property. `charges` is how many more attacks it
+/// will block before it depletes; a shield with charges=0 is inert.
+model Defense {
+  id          String      @id @default(uuid())
+  propertyId  String
+  property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  kind        DefenseKind
+  charges     Int         @default(1)
+  activatedAt DateTime    @default(now())
+  expiresAt   DateTime?
+  isActive    Boolean     @default(true)
+
+  @@index([propertyId, isActive])
+}
+
+/// Global, admin-configurable attack probabilities. Singleton row, same
+/// pattern as PlatformConfig.
+model AttackConfig {
+  id                Int      @id @default(autoincrement())
+  maxAttacksPerDay  Int      @default(3)
+  successRatePct    Int      @default(60)
+  criticalRatePct   Int      @default(10) // chance of CRITICAL, conditional on a non-blocked attack
+  failRatePct       Int      @default(15) // remaining probability is SUCCESS
+  creditRewardMin   Int      @default(5)
+  creditRewardMax   Int      @default(25)
+  criticalRewardMin Int      @default(30)
+  criticalRewardMax Int      @default(75)
+  attacksEnabled    Boolean  @default(true)
+  updatedAt         DateTime @updatedAt
+  updatedById       String?
+  updatedBy         User?    @relation("AttackConfigUpdatedBy", fields: [updatedById], references: [id])
+}
+
+model Attack {
+  id                    String       @id @default(uuid())
+  worldId               String
+  world                 World        @relation(fields: [worldId], references: [id])
+  attackerId            String
+  attacker              User         @relation("AttackAttacker", fields: [attackerId], references: [id])
+  defenderId            String
+  defender              User         @relation("AttackDefender", fields: [defenderId], references: [id])
+  targetPropertyId      String
+  targetProperty        Property     @relation(fields: [targetPropertyId], references: [id])
+  result                AttackResult
+  attackerCreditsChange Int          @default(0)
+  defenderCreditsChange Int          @default(0)
+  defenseUsed           DefenseKind?
+  createdAt             DateTime     @default(now())
+
+  @@index([attackerId])
+  @@index([defenderId])
+  @@index([createdAt])
+}
+
+/// Tracks how many of a player's daily attack allowance they've used today.
+/// `date` is a "YYYY-MM-DD" string in server time for simple day bucketing.
+model DailyAttackAllowance {
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        String
+  attacksUsed Int    @default(0)
+
+  @@unique([userId, date])
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  worldId     String?
+  world       World?   @relation(fields: [worldId], references: [id])
+  name        String
+  description String?
+  emoji       String   @default("🎉")
+  startAt     DateTime
+  endAt       DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  items EventItem[]
+
+  @@index([isActive])
+}
+
+/// A cosmetic/decoration catalog entry introduced by an event. Once the
+/// event ends, un-owned event items become unavailable for new players to
+/// acquire, but players who already own one (PlayerEventItem) keep it.
+model EventItem {
+  id         String  @id @default(uuid())
+  eventId    String
+  event      Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  objectType String
+  name       String
+  emoji      String  @default("🎁")
+  isLimited  Boolean @default(true)
+
+  owners PlayerEventItem[]
+
+  @@unique([eventId, objectType])
+}
+
+model PlayerEventItem {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventItemId String
+  eventItem   EventItem @relation(fields: [eventItemId], references: [id])
+  acquiredAt  DateTime  @default(now())
+
+  @@unique([userId, eventItemId])
+}
+
+/// Every administrative action (test-world creation, sandbox grants, world
+/// config changes, user freezes, etc.) writes exactly one row here. This is
+/// the audit trail required before any admin action touching a production
+/// user is allowed.
+model AdminActionLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation("AdminActionLogAdmin", fields: [adminId], references: [id])
+  action     String
+  targetType String?
+  targetId   String?
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
+}
+
+/// Direct-sale listing for a Property (mirrors Listing above, scoped to the
+/// pixel-world system). Reuses the same ListingStatus enum and the same fee
+/// logic in walletService.
+model PropertyListing {
+  id          String        @id @default(uuid())
+  propertyId  String
+  property    Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  worldId     String
+  world       World         @relation(fields: [worldId], references: [id])
+  sellerId    String
+  seller      User          @relation("PropertyListingSeller", fields: [sellerId], references: [id])
+  buyerId     String?
+  buyer       User?         @relation("PropertyListingBuyer", fields: [buyerId], references: [id])
+  priceCents  Int
+  status      ListingStatus @default(ACTIVE)
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  soldAt      DateTime?
+  cancelledAt DateTime?
+
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([propertyId])
+}
+
+model PropertyAuction {
+  id                 String        @id @default(uuid())
+  propertyId         String
+  property           Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  worldId            String
+  world              World         @relation(fields: [worldId], references: [id])
+  sellerId           String
+  seller             User          @relation("PropertyAuctionSeller", fields: [sellerId], references: [id])
+  description        String?
+  startingPriceCents Int
+  reservePriceCents  Int?
+  currentBidCents    Int?
+  currentBidderId    String?
+  currentBidder      User?         @relation("PropertyAuctionWinner", fields: [currentBidderId], references: [id])
+  status             AuctionStatus @default(ACTIVE)
+  startAt            DateTime      @default(now())
+  endAt              DateTime
+  settledAt          DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  bids         PropertyBid[]
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([endAt])
+  @@index([propertyId])
+}
+
+model PropertyBid {
+  id          String          @id @default(uuid())
+  auctionId   String
+  auction     PropertyAuction @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  bidderId    String
+  bidder      User            @relation(fields: [bidderId], references: [id])
+  amountCents Int
+  createdAt   DateTime        @default(now())
+
+  @@index([auctionId])
+  @@index([bidderId])
+}

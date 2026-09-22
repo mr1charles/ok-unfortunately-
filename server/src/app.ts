@@ -11,6 +11,14 @@ import { decorationsRouter } from "./routes/decorations.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { reportsRouter } from "./routes/reports.js";
 import { adminRouter } from "./routes/admin.js";
+import { worldsRouter } from "./routes/worlds.js";
+import { propertiesRouter } from "./routes/properties.js";
+import { creditsRouter } from "./routes/credits.js";
+import { attacksRouter } from "./routes/attacks.js";
+import { defensesRouter } from "./routes/defenses.js";
+import { eventsRouter } from "./routes/events.js";
+import { propertyMarketRouter } from "./routes/propertyMarket.js";
+import { adminWorldRouter } from "./routes/adminWorld.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 export function createApp() {
@@ -31,6 +39,17 @@ export function createApp() {
   app.use("/api/notifications", notificationsRouter);
   app.use("/api/reports", reportsRouter);
   app.use("/api/admin", adminRouter);
+
+  // Pixel-world system (Worlds/Islands, 100M-pixel City Island, Properties,
+  // Credits, Attacks/Defenses, Events, Godot client API surface).
+  app.use("/api/worlds", worldsRouter);
+  app.use("/api/properties", propertiesRouter);
+  app.use("/api/credits", creditsRouter);
+  app.use("/api/attacks", attacksRouter);
+  app.use("/api/defenses", defensesRouter);
+  app.use("/api/events", eventsRouter);
+  app.use("/api/property-market", propertyMarketRouter);
+  app.use("/api/admin/worlds", adminWorldRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -9,3 +9,8 @@ build/
 coverage/
 server/prisma/dev.db
 .turbo/
+
+# Godot
+game-client/.godot/
+game-client/export_presets.cfg
+*.translation

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import * as walletApi from "../api/wallet";
 import * as authApi from "../api/auth";
 import { useAuth } from "../context/AuthContext";
@@ -139,6 +140,15 @@ export function SettingsPage() {
           marketplace. Prices can go up or down, and past sales are not a guarantee of future value. Pixel Estates
           does not promise, imply, or guarantee any return on land you purchase.
         </p>
+      </section>
+
+      <section className="panel p-5 text-xs text-slate-400 flex gap-4">
+        <Link to="/terms" className="text-brand-500 font-bold hover:underline">
+          Terms &amp; Conditions
+        </Link>
+        <Link to="/privacy" className="text-brand-500 font-bold hover:underline">
+          Privacy Policy
+        </Link>
       </section>
     </div>
   );

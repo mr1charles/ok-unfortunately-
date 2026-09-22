@@ -102,6 +102,11 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           <p className="text-white/80 text-sm">A virtual world land marketplace</p>
         </div>
         <div className="panel p-8 animate-pop-in">{children}</div>
+        <p className="text-center text-xs text-white/70 mt-4">
+          <Link to="/terms" className="hover:underline">Terms &amp; Conditions</Link>
+          {" · "}
+          <Link to="/privacy" className="hover:underline">Privacy Policy</Link>
+        </p>
       </div>
     </div>
   );

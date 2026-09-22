@@ -91,6 +91,54 @@ export const DECORATION_CATALOG: DecorationCatalogEntry[] = [
   { key: "fountain", label: "Fountain", category: "building", emoji: "⛲", footprint: { w: 2, h: 2 } },
 ];
 
+// ---------------------------------------------------------------------------
+// Pixel-world system (Worlds/Islands, sparse pixel ownership, Properties,
+// credits, attacks/defenses, events). Consumed by the React admin/marketplace
+// app and mirrored (informally) by the Godot client's API layer.
+// ---------------------------------------------------------------------------
+
+export type WorldKind = "STANDARD" | "EVENT" | "TEST_COPY";
+
+export type DefenseKind = "SHIELD" | "ENERGY_BARRIER" | "SECURITY_TOWER";
+
+export type AttackResultKind = "SUCCESS" | "BLOCKED" | "FAILED" | "CRITICAL";
+
+export type PropertyMarketStatus = "NONE" | "LISTED" | "AUCTION";
+
+export const DEFENSE_CATALOG: { kind: DefenseKind; label: string; emoji: string; creditCost: number; charges: number }[] = [
+  { kind: "SHIELD", label: "Energy Shield", emoji: "🛡️", creditCost: 50, charges: 3 },
+  { kind: "ENERGY_BARRIER", label: "Energy Barrier", emoji: "⚡", creditCost: 80, charges: 5 },
+  { kind: "SECURITY_TOWER", label: "Security Tower", emoji: "🗼", creditCost: 150, charges: 10 },
+];
+
+export interface WorldSummaryDTO {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  emoji: string;
+  kind: WorldKind;
+  pixelWidth: number;
+  pixelHeight: number;
+  chunkSize: number;
+  pixelPriceCents: number;
+  maxPixelsPerPurchase: number;
+  maxPropertiesPerPlayer: number | null;
+  developmentThresholds: DevelopmentThresholdDTO[];
+  ownedPixelCount: number;
+  totalPixels: number;
+  developmentPercent: number;
+  isActive: boolean;
+  isTestCopy: boolean;
+  sourceWorldId: string | null;
+}
+
+export interface DevelopmentThresholdDTO {
+  percent: number;
+  stage: string;
+  label: string;
+}
+
 export interface ApiErrorBody {
   error: string;
   message: string;

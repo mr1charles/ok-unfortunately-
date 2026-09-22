@@ -63,6 +63,9 @@ export interface LedgerParams {
   plotId?: string | null;
   listingId?: string | null;
   auctionId?: string | null;
+  propertyId?: string | null;
+  propertyListingId?: string | null;
+  propertyAuctionId?: string | null;
   description: string;
   /** When true (marketplace/auction sales), the platform fee is deducted from
    * the gross amount before crediting `toUserId`. Platform-direct purchases
@@ -101,6 +104,9 @@ export async function applyLedgerEntry(tx: TxClient, params: LedgerParams) {
       plotId: params.plotId ?? null,
       listingId: params.listingId ?? null,
       auctionId: params.auctionId ?? null,
+      propertyId: params.propertyId ?? null,
+      propertyListingId: params.propertyListingId ?? null,
+      propertyAuctionId: params.propertyAuctionId ?? null,
       description: params.description,
     },
   });

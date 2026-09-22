@@ -45,3 +45,56 @@ export const MAX_PAGE_SIZE = 100;
  * job rather than a distributed scheduler; see server/src/jobs/auctionCloser.ts.
  */
 export const AUCTION_SWEEP_INTERVAL_MS = 5_000;
+
+// ---------------------------------------------------------------------------
+// Pixel-world system (Worlds/Islands, City Island, chunk streaming, credits,
+// attacks/defenses). These are seed/display defaults only - the live,
+// authoritative values live in the World and AttackConfig database rows
+// (server/src/services/worldService.ts, attackService.ts). No route or
+// service should hardcode these numbers; always read them from the relevant
+// World/AttackConfig row.
+// ---------------------------------------------------------------------------
+
+/** City Island: 10,000 x 10,000 = 100,000,000 purchasable pixels. */
+export const CITY_ISLAND_WIDTH = 10_000;
+export const CITY_ISLAND_HEIGHT = 10_000;
+export const CITY_ISLAND_TOTAL_PIXELS = CITY_ISLAND_WIDTH * CITY_ISLAND_HEIGHT;
+
+/** $0.01 per pixel by default. */
+export const PIXEL_PRICE_CENTS_DEFAULT = 1;
+
+/** Pixels per chunk edge; the client streams chunks around the player/camera. */
+export const DEFAULT_CHUNK_SIZE = 64;
+
+/** A single purchase request (single pixel, rectangle, or explicit list) is
+ * capped at this many pixels to keep each transaction bounded and fast. */
+export const DEFAULT_MAX_PIXELS_PER_PURCHASE = 50_000;
+
+/** How the world visually evolves as ownedPixelCount / totalPixels grows. */
+export interface DevelopmentThreshold {
+  percent: number;
+  stage: string;
+  label: string;
+}
+
+export const DEFAULT_DEVELOPMENT_THRESHOLDS: DevelopmentThreshold[] = [
+  { percent: 0, stage: "blank", label: "Blank gray world" },
+  { percent: 10, stage: "infrastructure", label: "Basic infrastructure appears" },
+  { percent: 25, stage: "roads", label: "Road systems become available" },
+  { percent: 50, stage: "buildings", label: "Buildings and city systems expand" },
+  { percent: 75, stage: "advanced", label: "Advanced city structures unlock" },
+  { percent: 100, stage: "developed", label: "Fully developed island" },
+];
+
+/** Default daily attack allowance and mining reward range (mirrors
+ * AttackConfig's DB defaults; used for client-side display before the
+ * authoritative config loads). */
+export const DEFAULT_MAX_ATTACKS_PER_DAY = 3;
+export const DEFAULT_MINING_CREDIT_MIN = 3;
+export const DEFAULT_MINING_CREDIT_MAX = 12;
+export const MINING_HOLD_DURATION_MS = 1_500;
+export const MINING_COOLDOWN_MS = 10_000;
+
+/** New-player starting credits (dev + production; credits aren't real money
+ * so there's no dev/prod split the way DEV_STARTING_BALANCE_CENTS has). */
+export const STARTING_CREDITS = 100;

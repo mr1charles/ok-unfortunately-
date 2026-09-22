@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { usePolling } from "../hooks/usePolling";
 import * as adminApi from "../api/admin";
+import * as adminWorldApi from "../api/adminWorld";
 import { useToast } from "../context/ToastContext";
 import { ApiClientError } from "../api/client";
 import { formatCents, timeAgo } from "../lib/format";
 
-type Tab = "overview" | "users" | "transactions" | "reports";
+type Tab = "overview" | "users" | "transactions" | "reports" | "islands";
 
 export function AdminPage() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -16,9 +17,84 @@ export function AdminPage() {
   const { data: usersData, reload: reloadUsers } = usePolling(() => adminApi.fetchAdminUsers(), 20000);
   const { data: txData, reload: reloadTx } = usePolling(() => adminApi.fetchAdminTransactions(50), 20000);
   const { data: reportsData, reload: reloadReports } = usePolling(() => adminApi.fetchAdminReports(), 20000);
+  const { data: worldsData, reload: reloadWorlds } = usePolling(() => adminWorldApi.fetchWorlds(true), 15000);
+  const { data: attackConfigData, reload: reloadAttackConfig } = usePolling(() => adminWorldApi.fetchAttackConfig(), 20000);
+  const { data: eventsData, reload: reloadEvents } = usePolling(() => adminWorldApi.fetchEvents(), 20000);
+  const { data: actionLogData, reload: reloadActionLog } = usePolling(() => adminWorldApi.fetchActionLog(50), 15000);
 
   const stats = statsData?.stats;
   const [feeInput, setFeeInput] = useState<string>("");
+  const [attackConfigInput, setAttackConfigInput] = useState<Partial<adminWorldApi.AttackConfigDTO>>({});
+  const [newEventName, setNewEventName] = useState("");
+  const [newEventKey, setNewEventKey] = useState("");
+  const [newEventDays, setNewEventDays] = useState("14");
+
+  async function handleCloneTestWorld(worldId: string) {
+    try {
+      const { world } = await adminWorldApi.createTestWorldCopy(worldId, "Created from admin dashboard");
+      toast(`Created test copy: ${world.name}`, "success");
+      await reloadWorlds();
+    } catch (err) {
+      toast(err instanceof ApiClientError ? err.message : "Could not create test world", "error");
+    }
+  }
+
+  async function handleDeleteWorld(worldId: string) {
+    try {
+      await adminWorldApi.deleteWorld(worldId);
+      toast("World deleted.", "success");
+      await reloadWorlds();
+    } catch (err) {
+      toast(err instanceof ApiClientError ? err.message : "Could not delete world (only empty/test worlds can be deleted)", "error");
+    }
+  }
+
+  async function handleSaveAttackConfig() {
+    try {
+      const config = attackConfigData?.config;
+      if (!config) return;
+      const merged = { ...config, ...attackConfigInput };
+      await adminWorldApi.updateAttackConfig(merged);
+      toast("Attack config updated.", "success");
+      setAttackConfigInput({});
+      await reloadAttackConfig();
+    } catch (err) {
+      toast(err instanceof ApiClientError ? err.message : "Could not update attack config", "error");
+    }
+  }
+
+  async function handleCreateEvent() {
+    if (!newEventKey || !newEventName) {
+      toast("Event key and name are required", "error");
+      return;
+    }
+    try {
+      const now = new Date();
+      const end = new Date(now.getTime() + Number(newEventDays) * 24 * 60 * 60 * 1000);
+      await adminWorldApi.createEvent({
+        key: newEventKey,
+        name: newEventName,
+        startAt: now.toISOString(),
+        endAt: end.toISOString(),
+        items: [],
+      });
+      toast("Event created.", "success");
+      setNewEventKey("");
+      setNewEventName("");
+      await reloadEvents();
+    } catch (err) {
+      toast(err instanceof ApiClientError ? err.message : "Could not create event", "error");
+    }
+  }
+
+  async function handleToggleEvent(eventId: string, isActive: boolean) {
+    try {
+      await adminWorldApi.setEventActive(eventId, isActive);
+      await reloadEvents();
+    } catch (err) {
+      toast(err instanceof ApiClientError ? err.message : "Could not update event", "error");
+    }
+  }
 
   async function saveFee() {
     const value = Number(feeInput);
@@ -73,7 +149,7 @@ export function AdminPage() {
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        {(["overview", "users", "transactions", "reports"] as Tab[]).map((t) => (
+        {(["overview", "users", "transactions", "reports", "islands"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -239,6 +315,144 @@ export function AdminPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === "islands" && (
+        <div className="flex flex-col gap-6">
+          <section>
+            <h3 className="font-bold mb-2">Worlds / Islands</h3>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(worldsData?.worlds ?? []).map((w) => (
+                <div key={w.id} className="panel p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="font-extrabold">
+                      {w.emoji} {w.name}
+                    </p>
+                    {w.isTestCopy && <span className="badge bg-orange-500 text-white">TEST</span>}
+                  </div>
+                  <p className="text-xs text-slate-400 mb-2">
+                    {w.ownedPixelCount.toLocaleString()} / {w.totalPixels.toLocaleString()} pixels owned (
+                    {w.developmentPercent.toFixed(4)}%)
+                  </p>
+                  <p className="text-xs text-slate-400 mb-3">{formatCents(w.pixelPriceCents)}/pixel</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {!w.isTestCopy && (
+                      <button className="btn-secondary !text-xs !px-2 !py-1" onClick={() => handleCloneTestWorld(w.id)}>
+                        ⚠ Clone as test world
+                      </button>
+                    )}
+                    {(w.isTestCopy || w.ownedPixelCount === 0) && (
+                      <button className="btn-danger !text-xs !px-2 !py-1" onClick={() => handleDeleteWorld(w.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel p-5 max-w-2xl">
+            <h3 className="font-bold mb-1">Daily attack configuration</h3>
+            <p className="text-xs text-slate-400 mb-3">
+              Controls the odds for every attack across all worlds. Success + Critical + Fail must add up to 100.
+            </p>
+            {attackConfigData?.config && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                {(
+                  [
+                    ["maxAttacksPerDay", "Max attacks/day"],
+                    ["successRatePct", "Success %"],
+                    ["criticalRatePct", "Critical %"],
+                    ["failRatePct", "Fail %"],
+                    ["creditRewardMin", "Success reward min"],
+                    ["creditRewardMax", "Success reward max"],
+                    ["criticalRewardMin", "Critical reward min"],
+                    ["criticalRewardMax", "Critical reward max"],
+                  ] as [keyof adminWorldApi.AttackConfigDTO, string][]
+                ).map(([key, label]) => (
+                  <div key={key}>
+                    <label className="label">{label}</label>
+                    <input
+                      type="number"
+                      className="input"
+                      defaultValue={attackConfigData.config[key] as number}
+                      onChange={(e) => setAttackConfigInput((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            <button className="btn-primary mt-4" onClick={handleSaveAttackConfig}>
+              Save attack config
+            </button>
+          </section>
+
+          <section className="panel p-5 max-w-2xl">
+            <h3 className="font-bold mb-3">Events</h3>
+            <div className="flex flex-col gap-2 mb-4">
+              {(eventsData?.events ?? []).map((ev) => (
+                <div key={ev.id} className="flex items-center justify-between text-sm border-b border-black/5 dark:border-white/5 py-2">
+                  <span>
+                    {ev.emoji} {ev.name} <span className="text-xs text-slate-400">({ev.items.length} items)</span>
+                  </span>
+                  <button
+                    className={ev.isActive ? "btn-danger !text-xs !px-2 !py-1" : "btn-secondary !text-xs !px-2 !py-1"}
+                    onClick={() => handleToggleEvent(ev.id, !ev.isActive)}
+                  >
+                    {ev.isActive ? "End event" : "Reactivate"}
+                  </button>
+                </div>
+              ))}
+              {(eventsData?.events ?? []).length === 0 && <p className="text-xs text-slate-400">No events yet.</p>}
+            </div>
+            <div className="flex gap-2 flex-wrap items-end">
+              <div>
+                <label className="label">Key</label>
+                <input className="input !w-32" value={newEventKey} onChange={(e) => setNewEventKey(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Name</label>
+                <input className="input !w-40" value={newEventName} onChange={(e) => setNewEventName(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Duration (days)</label>
+                <input type="number" className="input !w-24" value={newEventDays} onChange={(e) => setNewEventDays(e.target.value)} />
+              </div>
+              <button className="btn-primary" onClick={handleCreateEvent}>
+                Create event
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="font-bold mb-2">Admin action log</h3>
+            <div className="panel overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 dark:bg-white/5 text-left uppercase text-slate-400">
+                  <tr>
+                    <th className="p-2">Admin</th>
+                    <th className="p-2">Action</th>
+                    <th className="p-2">Target</th>
+                    <th className="p-2">Reason</th>
+                    <th className="p-2">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(actionLogData?.log ?? []).map((row) => (
+                    <tr key={row.id} className="border-t border-black/5 dark:border-white/5">
+                      <td className="p-2 font-bold">{row.admin.username}</td>
+                      <td className="p-2">{row.action}</td>
+                      <td className="p-2 text-slate-500">{row.targetType ?? "—"}</td>
+                      <td className="p-2 text-slate-500">{row.reason ?? "—"}</td>
+                      <td className="p-2 text-slate-400">{timeAgo(row.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       )}
     </div>

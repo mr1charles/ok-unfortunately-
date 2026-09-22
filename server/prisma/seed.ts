@@ -9,6 +9,12 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from "@pixel-estates/shared";
+import { ensureCityIsland } from "../src/services/worldService.js";
+import { purchasePixels, expandRect } from "../src/services/pixelService.js";
+import { ensureCreditBalance, creditUser } from "../src/services/creditService.js";
+import { getOrCreateAttackConfig } from "../src/services/attackService.js";
+import { purchaseDefense } from "../src/services/defenseService.js";
+import { createEvent } from "../src/services/eventService.js";
 
 const prisma = new PrismaClient();
 
@@ -255,6 +261,66 @@ async function main() {
 
       console.log("Seeded starter ownership: alice owns 2 plots (1 listed), bob owns 2 plots (1 in a live auction)");
     }
+  }
+
+  // --- Pixel-world system: City Island (100,000,000 pixels), credits, ------
+  // --- attack config, a starter property for alice/bob, and one event -----
+  const cityIsland = await ensureCityIsland();
+  console.log(`City Island ready: ${cityIsland.pixelWidth}x${cityIsland.pixelHeight} = ${(cityIsland.pixelWidth * cityIsland.pixelHeight).toLocaleString()} pixels @ $${(cityIsland.pixelPriceCents / 100).toFixed(2)}/pixel`);
+
+  await getOrCreateAttackConfig();
+
+  for (const user of [admin, alice, bob]) {
+    await ensureCreditBalance(user.id);
+  }
+
+  const alicePropertyCount = await prisma.property.count({ where: { worldId: cityIsland.id, ownerId: alice.id } });
+  if (alicePropertyCount === 0) {
+    // Alice buys a 10x10 block near the center of City Island - her first
+    // connected property, big enough to place a building and a shield.
+    const cx = Math.floor(cityIsland.pixelWidth / 2);
+    const cy = Math.floor(cityIsland.pixelHeight / 2);
+    const alicePlot = await purchasePixels(alice.id, cityIsland.id, {
+      coords: expandRect(cx, cy, cx + 9, cy + 9),
+      colorHex: "#e0559b",
+    });
+    const aliceProperty = alicePlot.propertyIds[0];
+    await prisma.propertyDecoration.create({
+      data: { propertyId: aliceProperty, objectType: "house_small", x: cx, y: cy, placedByUserId: alice.id },
+    });
+    await creditUser(prisma, alice.id, 150, "Seed starting credits top-up", "ADMIN_GRANT");
+    await purchaseDefense(alice.id, aliceProperty, "SHIELD");
+
+    // Bob buys an adjacent block so players can see two different owners'
+    // colors sitting right next to each other on the same island.
+    const bobPlot = await purchasePixels(bob.id, cityIsland.id, {
+      coords: expandRect(cx + 10, cy, cx + 15, cy + 9),
+      colorHex: "#22c55e",
+    });
+    await creditUser(prisma, bob.id, 80, "Seed starting credits top-up", "ADMIN_GRANT");
+
+    console.log(
+      `Seeded City Island starter properties: alice owns a 10x10 plot near (${cx}, ${cy}) with a shield, bob owns an adjacent 6x10 plot (${bobPlot.purchasedCount} pixels)`
+    );
+  }
+
+  const halloweenExists = await prisma.event.findUnique({ where: { key: "halloween-2026" } });
+  if (!halloweenExists) {
+    const inTwoWeeks = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14);
+    await createEvent(admin.id, {
+      key: "halloween-2026",
+      name: "Halloween on City Island",
+      description: "Limited-time spooky decorations for your property.",
+      emoji: "🎃",
+      worldId: cityIsland.id,
+      startAt: new Date(),
+      endAt: inTwoWeeks,
+      items: [
+        { objectType: "jack_o_lantern", name: "Jack-o'-Lantern", emoji: "🎃" },
+        { objectType: "spooky_tombstone", name: "Spooky Tombstone", emoji: "🪦" },
+      ],
+    });
+    console.log("Seeded Halloween on City Island event (2 limited-time items)");
   }
 
   console.log("\nSeed complete. Test accounts (development only):");

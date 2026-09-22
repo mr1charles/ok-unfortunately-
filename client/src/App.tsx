@@ -11,6 +11,8 @@ import { LandEditorPage } from "./pages/LandEditorPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AdminPage } from "./pages/AdminPage";
+import { TermsPage } from "./pages/TermsPage";
+import { PrivacyPage } from "./pages/PrivacyPage";
 
 function FullScreenLoader() {
   return (
@@ -48,6 +50,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={me ? <Navigate to="/world" replace /> : <LoginPage />} />
       <Route path="/register" element={me ? <Navigate to="/world" replace /> : <RegisterPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
       <Route
         path="/onboarding"
         element={

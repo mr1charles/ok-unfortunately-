@@ -1,0 +1,25 @@
+; Engine configuration file.
+; Pixel Estates - 3D game client (Godot 4.3)
+
+config_version=5
+
+[application]
+
+config/name="Pixel Estates"
+config/description="Walk the island, buy pixels, build, defend, and attack in the Pixel Estates 3D world."
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+
+[autoload]
+
+InputSetup="*res://scripts/net/InputSetup.gd"
+GameState="*res://scripts/net/GameState.gd"
+Api="*res://scripts/net/ApiClient.gd"
+
+[physics]
+
+3d/default_gravity=18.0
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0.55, 0.72, 0.9, 1)

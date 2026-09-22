@@ -4,9 +4,11 @@ import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { ApiClientError } from "../api/client";
 import { AuthShell } from "./LoginPage";
+import { SocialSignInButtons } from "../components/auth/SocialSignInButtons";
+import type { Me } from "../types";
 
 export function RegisterPage() {
-  const { register } = useAuth();
+  const { register, setMe } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -26,6 +28,12 @@ export function RegisterPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleSocialSuccess(user: Me, isNewAccount: boolean) {
+    setMe(user);
+    toast(isNewAccount ? `Welcome to Pixel Estates, ${user.username}!` : `Welcome back, ${user.username}!`, "success");
+    navigate(user.hasOnboarded ? "/world" : "/onboarding");
   }
 
   return (
@@ -67,6 +75,11 @@ export function RegisterPage() {
           {busy ? "Creating account..." : "Create account"}
         </button>
       </form>
+
+      <div className="mt-4">
+        <SocialSignInButtons onSuccess={handleSocialSuccess} />
+      </div>
+
       <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
         Already have an account?{" "}
         <Link to="/login" className="text-brand-500 font-bold hover:underline">

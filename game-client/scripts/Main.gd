@@ -30,8 +30,26 @@ var defense_catalog: Array = []
 
 func _ready() -> void:
 	_setup_environment()
+	var oauth_test := OS.get_environment("PIXEL_ESTATES_TEST_OAUTH")
 	var autologin := OS.get_environment("PIXEL_ESTATES_AUTOLOGIN")
-	if autologin != "":
+	if oauth_test != "":
+		# Headless/CI convenience: PIXEL_ESTATES_TEST_OAUTH="provider:email:name"
+		# exercises the same mock-token build + POST /auth/oauth/:provider path
+		# the dev sign-in dialog uses, without needing UI interaction.
+		var parts := oauth_test.split(":", true, 2)
+		var provider: String = parts[0]
+		var email: String = parts[1] if parts.size() > 1 else "test@example.com"
+		var name: String = parts[2] if parts.size() > 2 else "Test User"
+		print("[Main] PIXEL_ESTATES_TEST_OAUTH set, testing ", provider, " sign-in for ", email)
+		var sub := "dev-%s-%s" % [provider, email.to_lower()]
+		var id_token := GameState.build_mock_id_token(sub, email, name)
+		var result := await Api.oauth_sign_in(provider, id_token)
+		print("[TEST] oauth ok=", result.get("ok"), " status=", result.get("status"), " err=", result.get("error"))
+		if result.get("ok", false):
+			var data: Dictionary = result.get("data", {})
+			print("[TEST] isNewAccount=", data.get("isNewAccount"), " username=", data.get("user", {}).get("username"))
+			await _complete_session(data)
+	elif autologin != "":
 		# Headless/CI convenience: PIXEL_ESTATES_AUTOLOGIN="email:password"
 		# skips the login screen. Never used unless that env var is set.
 		var parts := autologin.split(":", true, 1)
@@ -145,6 +163,22 @@ func _show_login_screen() -> void:
 		_attempt_login(email_field.text, password_field.text, status_label, login_button)
 	)
 
+	var social_label := Label.new()
+	social_label.text = "or continue with"
+	social_label.add_theme_font_size_override("font_size", 11)
+	social_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(social_label)
+
+	var social_row := HBoxContainer.new()
+	social_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	social_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(social_row)
+	for social in [["google", "Google"], ["apple", "Apple"], ["microsoft", "Microsoft"]]:
+		var social_button := Button.new()
+		social_button.text = "%s (dev)" % social[1]
+		social_button.pressed.connect(func(): _show_oauth_dev_dialog(dim, social[0], social[1], status_label))
+		social_row.add_child(social_button)
+
 
 func _attempt_login(email: String, password: String, status_label: Label, login_button: Button) -> void:
 	login_button.disabled = true
@@ -154,8 +188,12 @@ func _attempt_login(email: String, password: String, status_label: Label, login_
 		status_label.text = result.get("error", "Login failed")
 		login_button.disabled = false
 		return
+	await _complete_session(result.get("data", {}))
 
-	var data: Dictionary = result.get("data", {})
+
+## Shared by password login and social sign-in: stores the session, warms
+## the credits cache, and transitions from the login screen into the world.
+func _complete_session(data: Dictionary) -> void:
 	GameState.set_session(String(data.get("token", "")), data.get("user", {}))
 
 	var credits_result := await Api.get_credits()
@@ -165,6 +203,81 @@ func _attempt_login(email: String, password: String, status_label: Label, login_
 	if login_layer:
 		login_layer.queue_free()
 	await _enter_world()
+
+
+## Dev-mode "Sign in with <provider>" dialog - the Godot-side equivalent of
+## client/src/components/auth/SocialSignInButtons.tsx's dev dialog. Real
+## native Google/Apple/Microsoft SDK plugins for Godot's iOS/Android export
+## are a follow-up (they require platform-specific plugin binaries built
+## with Xcode/Android Studio, which this environment can't produce); this
+## calls the exact same POST /api/auth/oauth/:provider endpoint a real
+## native SDK integration would, so swapping in real plugins later only
+## means replacing where `id_token` comes from.
+func _show_oauth_dev_dialog(parent: Control, provider_key: String, provider_label: String, outer_status: Label) -> void:
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.5)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	parent.add_child(dim)
+
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(320, 10)
+	dim.add_child(panel)
+	panel.position -= panel.custom_minimum_size / 2.0
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Dev sign-in: %s" % provider_label
+	title.add_theme_font_size_override("font_size", 18)
+	vbox.add_child(title)
+
+	var hint := Label.new()
+	hint.text = "No real %s app is configured, so this simulates the name/email a real sign-in would return." % provider_label
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD
+	vbox.add_child(hint)
+
+	var name_field := LineEdit.new()
+	name_field.placeholder_text = "name"
+	vbox.add_child(name_field)
+
+	var email_field := LineEdit.new()
+	email_field.placeholder_text = "email"
+	vbox.add_child(email_field)
+
+	var dialog_status := Label.new()
+	dialog_status.modulate = Color(1, 0.6, 0.6)
+	vbox.add_child(dialog_status)
+
+	var button_row := HBoxContainer.new()
+	vbox.add_child(button_row)
+
+	var cancel_button := Button.new()
+	cancel_button.text = "Cancel"
+	cancel_button.pressed.connect(func(): dim.queue_free())
+	button_row.add_child(cancel_button)
+
+	var continue_button := Button.new()
+	continue_button.text = "Continue"
+	continue_button.pressed.connect(func():
+		if email_field.text.strip_edges() == "":
+			dialog_status.text = "Enter an email"
+			return
+		continue_button.disabled = true
+		var display_name: String = name_field.text.strip_edges() if name_field.text.strip_edges() != "" else email_field.text.split("@")[0]
+		var sub := "dev-%s-%s" % [provider_key, email_field.text.strip_edges().to_lower()]
+		var id_token := GameState.build_mock_id_token(sub, email_field.text.strip_edges().to_lower(), display_name)
+		var result := await Api.oauth_sign_in(provider_key, id_token)
+		if not result.get("ok", false):
+			dialog_status.text = result.get("error", "Sign-in failed")
+			continue_button.disabled = false
+			return
+		dim.queue_free()
+		await _complete_session(result.get("data", {}))
+	)
+	button_row.add_child(continue_button)
 
 
 # --- World entry -------------------------------------------------------

@@ -3,9 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { ApiClientError } from "../api/client";
+import { SocialSignInButtons } from "../components/auth/SocialSignInButtons";
+import type { Me } from "../types";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, setMe } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [emailOrUsername, setEmailOrUsername] = useState("");
@@ -40,6 +42,12 @@ export function LoginPage() {
     setPassword(creds.password);
   }
 
+  function handleSocialSuccess(user: Me, isNewAccount: boolean) {
+    setMe(user);
+    toast(isNewAccount ? `Welcome to Pixel Estates, ${user.username}!` : `Welcome back, ${user.username}!`, "success");
+    navigate(user.hasOnboarded ? "/world" : "/onboarding");
+  }
+
   return (
     <AuthShell>
       <h1 className="text-2xl font-extrabold mb-1">Welcome back</h1>
@@ -70,6 +78,10 @@ export function LoginPage() {
           {busy ? "Logging in..." : "Log in"}
         </button>
       </form>
+
+      <div className="mt-4">
+        <SocialSignInButtons onSuccess={handleSocialSuccess} />
+      </div>
 
       <div className="mt-4 text-center text-xs text-slate-400">
         <p className="mb-2 font-bold">Demo accounts (dev mode)</p>

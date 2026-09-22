@@ -13,6 +13,41 @@ import { ensureBalanceRow } from "./walletService.js";
 
 const BCRYPT_ROUNDS = 10;
 
+type TxClient = Prisma.TransactionClient;
+
+/**
+ * Shared new-account setup: character, starter decoration catalog, and
+ * starting balance. Used by both email/password registration and
+ * first-time social sign-in (oauthService.ts) so a Google/Apple/Microsoft
+ * signup gets exactly the same onboarding as a regular one.
+ */
+export async function provisionNewAccount(
+  tx: TxClient,
+  params: { email: string; username: string; passwordHash: string | null }
+) {
+  const created = await tx.user.create({
+    data: { email: params.email, username: params.username, passwordHash: params.passwordHash },
+  });
+  await tx.character.create({
+    data: {
+      userId: created.id,
+      appearance: DEFAULT_CHARACTER_APPEARANCE as unknown as Prisma.InputJsonValue,
+    },
+  });
+  // Unlock the full starter decoration catalog for free so new players
+  // can decorate their first plot immediately.
+  await tx.inventoryItem.createMany({
+    data: DECORATION_CATALOG.map((item) => ({
+      userId: created.id,
+      objectType: item.key,
+      quantity: -1,
+    })),
+  });
+  const startingBalance = env.isProduction ? 0 : DEV_STARTING_BALANCE_CENTS;
+  await ensureBalanceRow(created.id, startingBalance, tx);
+  return created;
+}
+
 export async function registerUser(params: { email: string; username: string; password: string }) {
   const email = params.email.trim().toLowerCase();
   const username = params.username.trim();
@@ -28,29 +63,7 @@ export async function registerUser(params: { email: string; username: string; pa
 
   const passwordHash = await bcrypt.hash(params.password, BCRYPT_ROUNDS);
 
-  const user = await prisma.$transaction(async (tx) => {
-    const created = await tx.user.create({
-      data: { email, username, passwordHash },
-    });
-    await tx.character.create({
-      data: {
-        userId: created.id,
-        appearance: DEFAULT_CHARACTER_APPEARANCE as unknown as Prisma.InputJsonValue,
-      },
-    });
-    // Unlock the full starter decoration catalog for free so new players
-    // can decorate their first plot immediately.
-    await tx.inventoryItem.createMany({
-      data: DECORATION_CATALOG.map((item) => ({
-        userId: created.id,
-        objectType: item.key,
-        quantity: -1,
-      })),
-    });
-    const startingBalance = env.isProduction ? 0 : DEV_STARTING_BALANCE_CENTS;
-    await ensureBalanceRow(created.id, startingBalance, tx);
-    return created;
-  });
+  const user = await prisma.$transaction(async (tx) => provisionNewAccount(tx, { email, username, passwordHash }));
 
   const token = signAuthToken({ userId: user.id, role: user.role });
   return { user, token };
@@ -63,6 +76,9 @@ export async function loginUser(params: { emailOrUsername: string; password: str
   });
   if (!user) throw ApiError.unauthorized("Invalid credentials");
   if (user.isBanned) throw ApiError.forbidden("This account has been suspended");
+  if (!user.passwordHash) {
+    throw ApiError.badRequest("This account uses social sign-in - use the Google/Apple/Microsoft button instead");
+  }
 
   const valid = await bcrypt.compare(params.password, user.passwordHash);
   if (!valid) throw ApiError.unauthorized("Invalid credentials");

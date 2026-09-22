@@ -22,7 +22,7 @@ function navClass(isActive: boolean) {
   }`;
 }
 
-export function Sidebar() {
+export function Sidebar({ mobileOpen = false, onCloseMobile }: { mobileOpen?: boolean; onCloseMobile?: () => void }) {
   const { me, logout, isAdmin } = useAuth();
   const { theme, toggle } = useTheme();
 
@@ -30,7 +30,11 @@ export function Sidebar() {
   const appearance = me.character?.appearance ?? DEFAULT_CHARACTER_APPEARANCE;
 
   return (
-    <aside className="w-72 shrink-0 h-screen sticky top-0 flex flex-col panel !rounded-none !border-l-0 !border-t-0 !border-b-0 border-r p-4 gap-4 overflow-y-auto">
+    <aside
+      className={`w-72 shrink-0 h-screen fixed md:sticky top-0 left-0 z-40 flex flex-col panel !rounded-none !border-l-0 !border-t-0 !border-b-0 border-r p-4 gap-4 overflow-y-auto transition-transform duration-200 ${
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      }`}
+    >
       {/* Brand */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -41,6 +45,9 @@ export function Sidebar() {
           <NotificationBell />
           <button onClick={toggle} className="btn-ghost !p-2 rounded-full text-lg" title="Toggle theme">
             {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button onClick={onCloseMobile} className="btn-ghost !p-2 rounded-full text-lg md:hidden" title="Close menu">
+            ✕
           </button>
         </div>
       </div>
@@ -67,13 +74,13 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex flex-col gap-1 mt-2">
         {NAV_ITEMS.map((item) => (
-          <NavLink key={item.to} to={item.to} className={({ isActive }) => navClass(isActive)}>
+          <NavLink key={item.to} to={item.to} onClick={onCloseMobile} className={({ isActive }) => navClass(isActive)}>
             <span className="text-lg">{item.icon}</span>
             {item.label}
           </NavLink>
         ))}
         {isAdmin && (
-          <NavLink to="/admin" className={({ isActive }) => navClass(isActive)}>
+          <NavLink to="/admin" onClick={onCloseMobile} className={({ isActive }) => navClass(isActive)}>
             <span className="text-lg">🛡️</span>
             Admin Dashboard
           </NavLink>

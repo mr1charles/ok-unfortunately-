@@ -112,7 +112,11 @@ model User {
   id           String   @id @default(uuid())
   email        String   @unique
   username     String   @unique
-  passwordHash String
+  /// Null for accounts created via social sign-in that have never set a
+  /// password. authService rejects email/password login for these with a
+  /// clear "use social sign-in" error rather than a generic invalid-
+  /// credentials message.
+  passwordHash String?
   role         UserRole @default(PLAYER)
   isBanned     Boolean  @default(false)
   hasOnboarded Boolean  @default(false)
@@ -154,8 +158,34 @@ model User {
   propertyAuctionsSold   PropertyAuction[]      @relation("PropertyAuctionSeller")
   propertyAuctionsWon    PropertyAuction[]      @relation("PropertyAuctionWinner")
   propertyBids           PropertyBid[]
+  oauthAccounts          OAuthAccount[]
 
   @@index([role])
+}
+
+enum OAuthProviderKind {
+  GOOGLE
+  APPLE
+  MICROSOFT
+}
+
+/// A linked social sign-in identity. A user can link more than one
+/// provider to the same account (e.g. Google on web, Apple on iOS) - the
+/// account is found-or-created by (provider, providerAccountId), and a
+/// verified email match against an existing local account links to that
+/// account rather than creating a duplicate. See server/src/services/
+/// oauthService.ts.
+model OAuthAccount {
+  id                String            @id @default(uuid())
+  userId            String
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          OAuthProviderKind
+  providerAccountId String
+  email             String?
+  createdAt         DateTime          @default(now())
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Character {

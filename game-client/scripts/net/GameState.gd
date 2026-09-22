@@ -61,3 +61,14 @@ func format_cents(cents: int) -> String:
 	var sign: String = "-" if cents < 0 else ""
 	var abs_cents: int = absi(cents)
 	return "%s$%d.%02d" % [sign, abs_cents / 100, abs_cents % 100]
+
+
+## Builds a dev-mode "mock" identity token in the exact format
+## server/src/lib/oauth/mockProvider.ts expects (`mock.<base64url JSON>`) -
+## the GDScript equivalent of client/src/lib/mockOAuth.ts. Only ever used
+## for a provider GET /auth/oauth/providers reports as not "live".
+func build_mock_id_token(sub: String, email: String, name: String) -> String:
+	var json := JSON.stringify({"sub": sub, "email": email, "name": name})
+	var b64 := Marshalls.utf8_to_base64(json)
+	b64 = b64.replace("+", "-").replace("/", "_").rstrip("=")
+	return "mock.%s" % b64

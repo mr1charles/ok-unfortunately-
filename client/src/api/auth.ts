@@ -14,6 +14,20 @@ export function fetchMe() {
   return api.get<{ user: Me }>("/auth/me");
 }
 
+export type OAuthProviderKey = "GOOGLE" | "APPLE" | "MICROSOFT";
+
+export function fetchOAuthProviders() {
+  return api.get<{ providers: { provider: OAuthProviderKey; label: string; live: boolean }[] }>(
+    "/auth/oauth/providers"
+  );
+}
+
+export function oauthSignIn(provider: OAuthProviderKey, idToken: string) {
+  return api.post<{ token: string; user: Me; isNewAccount: boolean }>(`/auth/oauth/${provider.toLowerCase()}`, {
+    idToken,
+  });
+}
+
 export function updateCharacterAppearance(appearance: CharacterAppearance) {
   return api.patch<{ character: Character }>("/users/me/character", { appearance });
 }

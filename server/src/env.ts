@@ -17,4 +17,15 @@ export const env = {
   clientOrigin: (process.env.CLIENT_ORIGIN ?? "http://localhost:5173")
     .split(",")
     .map((s) => s.trim()),
+
+  // Social sign-in. Leaving a client ID unset makes that provider fall
+  // back to the mock verifier automatically (see lib/oauth/index.ts) -
+  // there is no separate "enable OAuth" flag, presence of the client ID
+  // is the switch.
+  oauth: {
+    googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+    appleClientId: process.env.APPLE_CLIENT_ID ?? "",
+    microsoftClientId: process.env.MICROSOFT_CLIENT_ID ?? "",
+    microsoftTenant: process.env.MICROSOFT_TENANT ?? "common",
+  },
 };

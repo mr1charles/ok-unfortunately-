@@ -83,6 +83,19 @@ func fetch_me() -> Dictionary:
 	return await get_json("/auth/me")
 
 
+func fetch_oauth_providers() -> Dictionary:
+	return await get_json("/auth/oauth/providers")
+
+
+## `provider` is "google" | "apple" | "microsoft" (lowercase). `id_token` is
+## either a real signed ID token from that provider's native SDK, or a
+## `mock.<base64url json>` token built by build_mock_id_token() below when
+## running against a provider the server reports as not "live" - see
+## the dev sign-in dialog wired up in Main.gd.
+func oauth_sign_in(provider: String, id_token: String) -> Dictionary:
+	return await post_json("/auth/oauth/%s" % provider, {"idToken": id_token})
+
+
 # --- Worlds -----------------------------------------------------------------
 
 func list_worlds() -> Dictionary:

@@ -12,5 +12,6 @@ server/prisma/dev.db
 
 # Godot
 game-client/.godot/
-game-client/export_presets.cfg
+game-client/android/keystore/
+game-client/builds/
 *.translation
